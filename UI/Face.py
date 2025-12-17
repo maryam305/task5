@@ -1,15 +1,18 @@
+import os
+# إخفاء تحذيرات TensorFlow
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
 import cv2
 import mediapipe as mp
 import numpy as np
-import os
 import glob
-import json
 from datetime import datetime
+import pygame
 
 # ==========================================
 # Application Settings
 # ==========================================
-WINDOW_NAME = "Snap Filter Pro - With Opacity Slider"
+WINDOW_NAME = "Snap Filter Pro - Bottom Only Cut"
 ASSETS_DIR = "assets"
 
 mp_face_mesh = mp.solutions.face_mesh
@@ -17,6 +20,17 @@ mp_selfie_segmentation = mp.solutions.selfie_segmentation
 
 class FaceMorphApp:
     def __init__(self):
+        # ==================================================
+        # تهيئة الصوت
+        # ==================================================
+        try:
+            pygame.mixer.pre_init(44100, -16, 2, 2048)
+            pygame.mixer.init()
+            pygame.init()
+            print("✅ Audio System Initialized Successfully")
+        except Exception as e:
+            print(f"❌ Audio Init Error: {e}")
+
         self.cap = cv2.VideoCapture(0)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
@@ -32,7 +46,7 @@ class FaceMorphApp:
             static_image_mode=True,
             max_num_faces=1,
             refine_landmarks=True,
-            min_detection_confidence=0.2
+            min_detection_confidence=0.1
         )
 
         self.segmenter = mp_selfie_segmentation.SelfieSegmentation(model_selection=1)
@@ -44,73 +58,119 @@ class FaceMorphApp:
         
         self.frame_w = 0
         self.frame_h = 0
-
-        # ### متغيرات الشريط الجديد ###
-        self.opacity = 1.0 # القيمة الافتراضية (ظاهر بالكامل)
+        self.opacity = 1.0 
         self.is_dragging_slider = False
-        self.slider_rect = (0, 0, 0, 0) # سيتم تحديدها لاحقاً (x, y, w, h)
+        self.slider_rect = (0, 0, 0, 0)
+
+        self.is_mouth_open = False 
+        self.mouth_threshold = 0.05 # الحساسية المطلوبة
         
         print("Loading assets...")
         self.load_assets_by_folders()
         
         cv2.namedWindow(WINDOW_NAME)
-        # ### نحتاج الآن لتعقب حركة الماوس أيضاً وليس فقط النقر ###
         cv2.setMouseCallback(WINDOW_NAME, self.on_mouse_click)
 
     def load_assets_by_folders(self):
-        # (نفس الكود السابق تماماً، لم يتغير شيء هنا)
         if not os.path.exists(ASSETS_DIR):
-            os.makedirs(ASSETS_DIR)
+            try: os.makedirs(ASSETS_DIR)
+            except: pass
             return
+            
         folders = [f for f in os.listdir(ASSETS_DIR) if os.path.isdir(os.path.join(ASSETS_DIR, f))]
         for folder in folders:
             folder_path = os.path.join(ASSETS_DIR, folder)
             self.categories[folder] = []
-            extensions = ('*.png', '*.webp', '*.jpg', '*.jpeg', '*.PNG', '*.JPG', '*.JPEG')
+            extensions = ('*.png', '*.webp', '*.jpg', '*.jpeg')
             all_files = []
             for ext in extensions: all_files.extend(glob.glob(os.path.join(folder_path, ext)))
             unique_files = list(set(all_files))
+            
             for fpath in unique_files:
                 try:
-                    asset_data = self.process_single_asset(fpath)
-                    if asset_data: self.categories[folder].append(asset_data)
-                except: pass
+                    asset_data = self.process_single_asset(fpath, folder_name=folder)
+                    if asset_data: 
+                        self.categories[folder].append(asset_data)
+                except Exception as e: pass
+                    
             if self.categories[folder]: self.category_names.append(folder)
 
-    def process_single_asset(self, fpath):
-        # (نفس الكود السابق تماماً)
+    def process_single_asset(self, fpath, folder_name="default"):
         img_original = cv2.imread(fpath)
         if img_original is None: return None
+        
+        base_name = os.path.splitext(fpath)[0]
+        sound_path = None
+        if os.path.exists(base_name + ".wav"): sound_path = base_name + ".wav"
+        elif os.path.exists(base_name + ".mp3"): sound_path = base_name + ".mp3"
+            
         img_rgb = cv2.cvtColor(img_original, cv2.COLOR_BGR2RGB)
+        h, w = img_original.shape[:2]
+
         res = self.asset_loader_mesh.process(img_rgb)
         if not res.multi_face_landmarks:
-            h, w = img_rgb.shape[:2]
             temp_img = cv2.resize(img_rgb, (w*2, h*2))
             res = self.asset_loader_mesh.process(temp_img)
             if not res.multi_face_landmarks: return None
-        seg_res = self.segmenter.process(img_rgb)
-        mask_val = seg_res.segmentation_mask if seg_res.segmentation_mask is not None else np.ones(img_original.shape[:2], dtype=np.float32)
-        mask = (mask_val > 0.4)
-        alpha_mask = np.zeros(img_original.shape[:2], dtype=np.uint8)
-        alpha_mask[mask] = 255
-        alpha_mask = cv2.GaussianBlur(alpha_mask, (3, 3), 0)
+            landmarks = np.array([[int(p.x * w), int(p.y * h)] for p in res.multi_face_landmarks[0].landmark], dtype=np.int32)
+        else:
+            landmarks = np.array([[int(p.x * w), int(p.y * h)] for p in res.multi_face_landmarks[0].landmark], dtype=np.int32)
+        
+        # 1. استثناء فولدر الحيوانات
+        if folder_name.lower() == 'animals':
+            seg_res = self.segmenter.process(img_rgb)
+            mask_val = seg_res.segmentation_mask if seg_res.segmentation_mask is not None else np.ones((h, w), dtype=np.float32)
+            final_mask = (mask_val > 0.4).astype(np.uint8) * 255
+        else:
+            # 2. قص الرقبة فقط والحفاظ على الجوانب والأعلى
+            # نقاط الفك السفلي فقط (من الأذن للأذن مروراً بالدقن)
+            JAWLINE_INDICES = [234, 93, 132, 58, 172, 136, 150, 149, 176, 148, 152, 377, 400, 378, 379, 365, 397, 288, 361, 323, 454]
+            jaw_points = landmarks[JAWLINE_INDICES]
+            
+            # بناء مضلع يغطي كل شيء "عدا" الرقبة
+            # نبدأ من الزاوية العلوية اليسرى للصورة
+            poly_points = [[0, 0]] 
+            # نذهب للزاوية العلوية اليمنى
+            poly_points.append([w, 0])
+            # نذهب للحافة اليمنى عند مستوى الأذن اليمنى
+            poly_points.append([w, jaw_points[-1][1]])
+            # نمشي مع خط الفك والدقن (من اليمين لليسار)
+            for p in reversed(jaw_points):
+                poly_points.append([p[0], p[1]])
+            # نذهب للحافة اليسرى عند مستوى الأذن اليسرى
+            poly_points.append([0, jaw_points[0][1]])
+            
+            poly_points_np = np.array(poly_points, dtype=np.int32)
+            
+            face_shape_mask = np.zeros((h, w), dtype=np.uint8)
+            cv2.fillPoly(face_shape_mask, [poly_points_np], 255)
+            
+            # عزل الخلفية
+            seg_res = self.segmenter.process(img_rgb)
+            mask_val = seg_res.segmentation_mask if seg_res.segmentation_mask is not None else np.ones((h, w), dtype=np.float32)
+            seg_mask = (mask_val > 0.4).astype(np.uint8) * 255
+            
+            # الدمج: الاحتفاظ بالجوانب والأعلى وقص الرقبة فقط
+            final_mask = cv2.bitwise_and(seg_mask, face_shape_mask)
+
+        final_mask = cv2.GaussianBlur(final_mask, (5, 5), 0)
         b, g, r = cv2.split(img_original)
-        img_rgba = cv2.merge((b, g, r, alpha_mask))
-        h, w = img_original.shape[:2]
-        landmarks = np.array([[int(p.x * w), int(p.y * h)] for p in res.multi_face_landmarks[0].landmark], dtype=np.int32)
+        img_rgba = cv2.merge((b, g, r, final_mask))
+        
         thumb = cv2.resize(img_rgba, (60, 60))
         mask_c = np.zeros((60, 60), dtype=np.uint8)
         cv2.circle(mask_c, (30, 30), 30, 255, -1)
         tb, tg, tr, ta = cv2.split(thumb)
         ta = cv2.bitwise_and(ta, ta, mask=mask_c)
         thumb_final = cv2.merge((tb, tg, tr, ta))
+        
         boundary = np.array([[0,0], [w//2,0], [w-1,0], [w-1,h//2], [w-1,h-1], [w//2,h-1], [0,h-1], [0,h//2]])
         full_lm = np.vstack((landmarks, boundary))
         tri = self.calculate_delaunay(full_lm)
-        return {"img": img_rgba, "lm": full_lm, "tri": tri, "thumb": thumb_final}
+        
+        return {"img": img_rgba, "lm": full_lm, "tri": tri, "thumb": thumb_final, "sound": sound_path}
 
     def calculate_delaunay(self, points):
-        # (نفس الكود السابق)
         rect = (0, 0, 4000, 4000)
         subdiv = cv2.Subdiv2D(rect)
         for p in points: subdiv.insert((float(p[0]), float(p[1])))
@@ -121,20 +181,14 @@ class FaceMorphApp:
             if all(pt in pt_dict for pt in pts): triangles.append([pt_dict[pt] for pt in pts])
         return triangles
 
-    # ### تعديل جوهري في التعامل مع الماوس لدعم السحب ###
     def on_mouse_click(self, event, x, y, flags, param):
-        # 1. التعامل مع الضغط (بداية السحب أو النقر)
         if event == cv2.EVENT_LBUTTONDOWN:
-            # التحقق هل الضغط تم داخل منطقة الشريط؟
             sx, sy, sw, sh = self.slider_rect
-            # نضيف هامش بسيط (15 بكسل) حول الشريط لتسهيل اللمس
             if sx - 15 <= x <= sx + sw + 15 and sy - 15 <= y <= sy + sh + 15:
                 self.is_dragging_slider = True
-                # حساب القيمة مباشرة عند الضغط
                 self.opacity = np.clip((x - sx) / sw, 0.0, 1.0)
-                return # نخرج حتى لا يتعارض مع الأزرار الأخرى
+                return 
 
-            # (باقي أكواد الأزرار العادية - تعمل فقط إذا لم نكن نضغط على الشريط)
             if np.linalg.norm(np.array([x, y]) - np.array([self.frame_w//2, self.frame_h-50])) < 35:
                 self.save_snapshot()
                 return
@@ -156,17 +210,16 @@ class FaceMorphApp:
                 for asset in self.categories[self.current_category]:
                     if curr_x < x < curr_x+60 and sy_ui < y < sy_ui+60:
                         self.selected_asset = asset
+                        self.is_mouth_open = False 
+                        pygame.mixer.stop()
                         return
                     curr_x += 75
 
-        # 2. التعامل مع تحريك الماوس (أثناء السحب)
         elif event == cv2.EVENT_MOUSEMOVE:
             if self.is_dragging_slider:
                 sx, sy, sw, sh = self.slider_rect
-                # حساب الموقع النسبي للماوس داخل الشريط (بين 0.0 و 1.0)
                 self.opacity = np.clip((x - sx) / sw, 0.0, 1.0)
 
-        # 3. التعامل مع رفع الزر (انتهاء السحب)
         elif event == cv2.EVENT_LBUTTONUP:
             self.is_dragging_slider = False
 
@@ -175,7 +228,6 @@ class FaceMorphApp:
         cv2.rectangle(overlay, (0, self.frame_h - 145), (self.frame_w, self.frame_h), (25, 25, 25), -1)
         cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
         
-        # --- رسم الأزرار السفلية (نفس الكود السابق) ---
         sx, sy = 20, self.frame_h - 130
         is_in_cat = (self.current_category is not None)
         cv2.circle(frame, (sx+30, sy+30), 30, (255, 255, 255), 2)
@@ -197,32 +249,14 @@ class FaceMorphApp:
 
         cv2.circle(frame, (self.frame_w//2, self.frame_h-50), 32, (255, 255, 255), 3)
 
-        # ### رسم شريط الشفافية (Slider) ###
-        if self.selected_asset is not None: # نرسمه فقط إذا كان هناك فلتر مختار
-            # إعدادات مكان وحجم الشريط (فوق الشريط السفلي على اليمين)
-            slider_w = 200
-            slider_h = 8
-            slider_x = self.frame_w - slider_w - 30
-            slider_y = self.frame_h - 180
-            
-            # تخزين المساحة لاستخدامها في الماوس
+        if self.selected_asset is not None:
+            slider_w, slider_h = 200, 8
+            slider_x, slider_y = self.frame_w - slider_w - 30, self.frame_h - 180
             self.slider_rect = (slider_x, slider_y, slider_w, slider_h)
-
-            # 1. رسم خلفية الشريط (الخط الرمادي)
-            cv2.rectangle(frame, (slider_x, slider_y), (slider_x + slider_w, slider_y + slider_h), (100, 100, 100), -1, cv2.LINE_AA)
-            
-            # 2. رسم الجزء الممتلئ (بناءً على القيمة)
+            cv2.rectangle(frame, (slider_x, slider_y), (slider_x + slider_w, slider_y + slider_h), (100, 100, 100), -1)
             filled_w = int(slider_w * self.opacity)
-            cv2.rectangle(frame, (slider_x, slider_y), (slider_x + filled_w, slider_y + slider_h), (0, 255, 255), -1, cv2.LINE_AA)
-
-            # 3. رسم المقبض (الدائرة)
-            knob_x = slider_x + filled_w
-            knob_y = slider_y + slider_h // 2
-            cv2.circle(frame, (knob_x, knob_y), 12, (255, 255, 255), -1, cv2.LINE_AA)
-            cv2.circle(frame, (knob_x, knob_y), 14, (0, 150, 150), 2, cv2.LINE_AA) # إطار للمقبض
-
-            # إضافة نص توضيحي
-            cv2.putText(frame, f"Opacity: {int(self.opacity*100)}%", (slider_x, slider_y - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+            cv2.rectangle(frame, (slider_x, slider_y), (slider_x + filled_w, slider_y + slider_h), (0, 255, 255), -1)
+            cv2.circle(frame, (slider_x + filled_w, slider_y + slider_h // 2), 12, (255, 255, 255), -1)
 
     def draw_icon(self, frame, thumb, x, y, is_selected):
         if x + 60 > self.frame_w: return
@@ -234,7 +268,6 @@ class FaceMorphApp:
         cv2.circle(frame, (x+30, y+30), 31, color, 2 if is_selected else 1)
 
     def get_user_boundary_points(self, user_lm, frame_w, frame_h):
-        # (نفس الكود السابق)
         x_min, y_min = np.min(user_lm, axis=0)
         x_max, y_max = np.max(user_lm, axis=0)
         wf, hf = x_max - x_min, y_max - y_min
@@ -244,11 +277,9 @@ class FaceMorphApp:
         ny1, ny2 = max(0, cy-int(hf*(0.5+s))), min(frame_h, cy+int(hf*(0.5+s)))
         return np.array([[nx1,ny1],[cx,ny1],[nx2,ny1],[nx2,cy],[nx2,ny2],[cx,ny2],[nx1,ny2],[nx1,cy]], dtype=np.int32)
 
-    # ### تعديل جوهري لتطبيق قيمة الشفافية ###
     def warp_face_transparent(self, frame, asset, user_lm):
         src_img, src_pts, tris = asset["img"], asset["lm"], asset["tri"]
         user_pts = np.vstack((user_lm, self.get_user_boundary_points(user_lm, self.frame_w, self.frame_h)))
-        
         warped_rgba = np.zeros((self.frame_h, self.frame_w, 4), dtype=np.uint8)
 
         for tri in tris:
@@ -268,21 +299,10 @@ class FaceMorphApp:
             target = warped_rgba[y1:y2, x1:x2]
             target[mask>0] = img2[mask>0]
 
-        # --- هنا يتم تطبيق الشفافية ---
         rgb = warped_rgba[:,:,:3]
-        # الحصول على قناة الألفا الأصلية وتنعيمها
-        base_alpha = cv2.GaussianBlur(warped_rgba[:,:,3]/255.0, (3,3), 0)
-        
-        # ضرب الألفا في قيمة الشريط (self.opacity) للتحكم في الظهور
-        final_alpha = base_alpha * self.opacity 
-        
+        final_alpha = (warped_rgba[:,:,3]/255.0) * self.opacity 
         a3 = np.dstack([final_alpha]*3)
-        
-        # الدمج النهائي باستخدام الألفا المعدلة
-        foreground = rgb.astype(np.float32)
-        background = frame.astype(np.float32)
-        final_img = foreground * a3 + background * (1.0 - a3)
-        
+        final_img = rgb.astype(np.float32) * a3 + frame.astype(np.float32) * (1.0 - a3)
         return final_img.astype(np.uint8)
 
     def save_snapshot(self):
@@ -291,6 +311,7 @@ class FaceMorphApp:
         print(f"Snapshot saved: {fn}")
 
     def run(self):
+        print("Starting Application Loop...")
         while self.cap.isOpened():
             ret, frame = self.cap.read()
             if not ret: break
@@ -301,10 +322,32 @@ class FaceMorphApp:
             res = self.face_mesh.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             
             if res.multi_face_landmarks:
-                pts = np.array([[int(p.x * self.frame_w), int(p.y * self.frame_h)] for p in res.multi_face_landmarks[0].landmark], dtype=np.int32)
+                raw_landmarks = res.multi_face_landmarks[0].landmark
+                pts = np.array([[int(p.x * self.frame_w), int(p.y * self.frame_h)] for p in raw_landmarks], dtype=np.int32)
+                
                 if self.selected_asset:
-                    # يتم الآن تطبيق الشفافية داخل هذه الدالة
                     output = self.warp_face_transparent(frame, self.selected_asset, pts)
+                    
+                    # --- منطق الصوت المحسن ---
+                    sound_file = self.selected_asset.get("sound")
+                    if sound_file:
+                        upper_lip_y = raw_landmarks[13].y
+                        lower_lip_y = raw_landmarks[14].y
+                        face_height = raw_landmarks[152].y - raw_landmarks[10].y
+                        ratio = (lower_lip_y - upper_lip_y) / face_height
+                        
+                        is_open_now = ratio > self.mouth_threshold
+                        
+                        if is_open_now and not self.is_mouth_open:
+                            try:
+                                pygame.mixer.stop()
+                                sound_effect = pygame.mixer.Sound(sound_file)
+                                sound_effect.play(-1)
+                                self.is_mouth_open = True
+                            except: pass
+                        elif not is_open_now and self.is_mouth_open:
+                            pygame.mixer.stop()
+                            self.is_mouth_open = False
             
             self.clean_frame = output.copy()
             self.draw_ui(output)
@@ -314,6 +357,7 @@ class FaceMorphApp:
             
         self.cap.release()
         cv2.destroyAllWindows()
+        pygame.quit()
 
 if __name__ == "__main__":
     app = FaceMorphApp()
