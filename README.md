@@ -20,17 +20,9 @@
 
 ### Flutter Mobile App Screens
 
-| 🔐 Next-Gen Login | 🏠 Home Screen (Joyful)
-| :---: | :---: | :---: |
-| ![Login](screenshots/01_login_screen.png) | ![Home Joyful](screenshots/02_home_joyful.png) 
-
-| ⚙️ Theme Selection | 
-| :---: | :---: | :---: |
-| ![Settings](screenshots/03_settings_screen.png)
-
-| 🌌 Shop & Studio (Galaxy) |  📞 Support & Feedback |
-| :---: | :---: | :---: |
-| ![Shop Galaxy](screenshots/05_shop_galaxy.png) | ![Support](screenshots/09_support_screen.png) |
+| 🌌 Shop & Studio (Galaxy) |  📞 Support & Feedback |⚙️ Theme Selection | 🔐 Next-Gen Login | 🏠 Home Screen (Joyful)|
+| :---: | :---: | :---: |:---: | :---: | 
+| ![Shop Galaxy](screenshots/05_shop_galaxy.png) | ![Support](screenshots/09_support_screen.png) |![Settings](screenshots/03_settings_screen.png)| ![Login](screenshots/01_login_screen.png) | ![Home Joyful](screenshots/02_home_joyful.png) |
 
 ---
 
