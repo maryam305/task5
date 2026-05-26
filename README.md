@@ -20,17 +20,17 @@
 
 ### Flutter Mobile App Screens
 
-| 🔐 Next-Gen Login | 🏠 Home Screen (Joyful) | 🏠 Home Screen (Galaxy) |
+| 🔐 Next-Gen Login | 🏠 Home Screen (Joyful)
 | :---: | :---: | :---: |
-| ![Login](screenshots/01_login_screen.png) | ![Home Joyful](screenshots/02_home_joyful.png) | ![Home Galaxy](screenshots/04_home_galaxy.png) |
+| ![Login](screenshots/01_login_screen.png) | ![Home Joyful](screenshots/02_home_joyful.png) 
 
-| ⚙️ Theme Selection | 🎨 Theme Studio (Cyberpunk) | 🪙 Item & Avatar Shop |
+| ⚙️ Theme Selection | 
 | :---: | :---: | :---: |
-| ![Settings](screenshots/03_settings_screen.png) | ![Settings Cyberpunk](screenshots/07_settings_cyberpunk.png) | ![Shop Items](screenshots/06_shop_items.png) |
+| ![Settings](screenshots/03_settings_screen.png)
 
-| 🌌 Shop & Studio (Galaxy) | 🏠 Home Screen (Cyberpunk) | 📞 Support & Feedback |
+| 🌌 Shop & Studio (Galaxy) |  📞 Support & Feedback |
 | :---: | :---: | :---: |
-| ![Shop Galaxy](screenshots/05_shop_galaxy.png) | ![Home Cyberpunk](screenshots/08_home_cyberpunk.png) | ![Support](screenshots/09_support_screen.png) |
+| ![Shop Galaxy](screenshots/05_shop_galaxy.png) | ![Support](screenshots/09_support_screen.png) |
 
 ---
 
