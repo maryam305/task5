@@ -4,7 +4,6 @@
 [![Flutter](https://img.shields.io/badge/Flutter-3.38.4-02569B?logo=flutter&logoColor=white&style=for-the-badge)](https://flutter.dev)
 [![Python](https://img.shields.io/badge/Python-3.11.9-3776AB?logo=python&logoColor=white&style=for-the-badge)](https://python.org)
 [![MediaPipe](https://img.shields.io/badge/MediaPipe-OpenCV-41B883?style=for-the-badge)](https://google.github.io/mediapipe/)
-[![License](https://img.shields.io/badge/License-MIT-brightgreen.style?style=for-the-badge)](LICENSE)
 
 ---
 
